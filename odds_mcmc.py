@@ -6,27 +6,33 @@ from numpy.random import random, randn, exponential
 from scipy.stats import bernoulli, beta, expon
 from functools import lru_cache
 import matplotlib.pyplot as plt
+from itertools import combinations
 
-def make_sym_matrix(n,vals):
-    m = np.zeros([n,n], dtype=np.double)
-    xs,ys = np.triu_indices(n,k=1)
-    m[xs,ys] = vals
-    m[ys,xs] = vals
-    m[ np.diag_indices(n) ] = 0 - np.sum(m, 0)
-    return m
 
 def scores2logprob(a, b):
+    '''
+    Translates two scores to log probabilities
+    a, b -> scores of first and second team
+    Returns: logprob that team A beats team B, and vice versa
+    '''
     z1 = np.log(a) - np.log(a+b)
     z2 = np.log(b) - np.log(a+b)
     return z1, z2
 
 def scores2prob(a, b):
+    '''
+    Same as above, but no log
+    '''
     z = a/(a+b)
     return z, 1-z
 
 # https://stackoverflow.com/questions/24471136/how-to-find-all-paths-between-two-graph-nodes
-
 def find_all_paths(graph, team_pair, path=None):
+    '''
+    Returns all acyclic paths from team A to team B
+    graph: Directed graph of games played
+    team_pair: starting and ending points
+    '''
     if not path: path = []
     start, end = team_pair
     path = path + [start]
@@ -44,38 +50,53 @@ def find_all_paths(graph, team_pair, path=None):
 
 
 class MCMC:
+    '''
+    Performs MCMC iterations to return posterior of scores
+    '''
 
-    def __init__(self, game_tables):
+    def __init__(self, game_tables, **kwargs):
         '''
-        games - matrix containing array of games played by team i vs team j
+        game_tables: Poissibly unfinished tables of games
         '''
-        self.std = 0.05
+        self.std = 0.05 # used for proposing next element
         self.n_accepted = 0
         self.n_iters = 0
-        self.alpha = self.beta = 1
+
+        prior_params = kwargs.get('prior', {})
+        self.alpha, self.beta = prior_params.get('alpha', 1), prior_params.get('beta', 1) # prior parameter
+        self.lower, self.upper = prior_params.get('lower', 0), prior_params.get('upper', 10) # prior parameter
         self.n_teams = game_tables[0].shape[0]
         self.game_tables = game_tables
 
         chains = []
+        # generates all possible paths from every pair of teams
         for rd, games in enumerate(game_tables):
             games_parsed = self._parse(games)
-            for i in range(self.n_teams):
-                for j in range(i+1, self.n_teams):
-                    print(f'generating paths for teams round {rd}: ({i}, {j})...', end='', flush=True)
-                    chain = [(rd, ch) for ch in find_all_paths(games_parsed, (i, j))]
-                    chains += chain
-                    print('done')
+            for i, j in combinations(range(self.n_teams), 2):
+                print(f'generating paths for teams round {rd}: ({i}, {j})...', end='', flush=True)
+                chain = [(rd, ch) for ch in find_all_paths(games_parsed, (i, j))]
+                chains += chain
+                print('done')
+
         self.chains = chains
-        self.last_post = None
+        self.last_post = None # used for caching
 
         self.last_theta = self._init_theta()
 
         self.posterior = []
 
     def _init_theta(self):
+        '''
+        Initialise random scores between 0 and 2 for the first n-1 teams
+        The last team has fixed score of 1 as a baseline
+        '''
         return np.append(random(self.n_teams-1)*2, 1)
 
+    # TODO: not a class method
     def _parse(self, games):
+        '''
+        Parses ndarray of games to directed graph in dictionary form
+        '''
         out = defaultdict(list)
         for i, row in enumerate(games):
             for j, game in enumerate(row):
@@ -83,11 +104,18 @@ class MCMC:
                     out[i].append(j)
         return out
 
+    # TODO: Only makes sense for MH mode, not Gibbs mode
     @property
     def get_acceptance_ratio(self):
         return self.n_accepted/self.n_iters
 
     def _loglikelihood(self, chains, theta):
+        '''
+        chains -> data X. All possible chains between A and B from all team pairse A and B
+        theta -> scores
+        L(X|S) = Prod_{rd in rounds}(Prod_{chain in chains}(Prod_{game in games}(BernoulliPDF(game, s))))
+        l(X|S) = Sum_{rd in rounds}(Sum_{chain in chains}(sum_{game in games}(LogBernoulliPDF(game, s))))
+        '''
         out = []
         for rd_chain in chains:
             rd, chain = rd_chain
@@ -101,10 +129,18 @@ class MCMC:
         return sum(out)
     
     def _logprior(self, theta):
+        '''
+        Log Prior of scores. In this case beta
+        '''
         theta_squash = theta[:-1]
-        return sum(expon.logpdf(theta_squash, scale=self.alpha))
+        a, b = self.lower, self.upper
+        return sum(beta.logpdf((theta_squash-a)/(b-a), self.alpha, self.beta))
 
     def _logpost(self, theta=None):
+        '''
+        Log posterior = log prior + log likelihood
+        '''
+        # caching
         if theta is None :
             if self.last_post:
                 return self.last_post  
@@ -113,18 +149,25 @@ class MCMC:
         return self._logprior(theta) + self._loglikelihood(self.chains, theta)
 
     def _propose(self, i=None):
+        '''
+        Proposal distribution
+        i -> only updates ith element
+        '''
         if i:
             theta = deepcopy(self.last_theta)
-            r = 0.1*randn()
+            r = self.std*randn()
             theta[i] += r
-            theta_new = np.clip(theta, self.std, np.inf)
+            theta_new = np.clip(theta, self.lower, self.upper)
         else:
             theta = deepcopy(self.last_theta)
-            r = np.append(0.1*randn(self.n_teams-1), 0)
-            theta_new = np.clip(theta + r, self.std, np.inf)
+            r = np.append(self.std*randn(self.n_teams-1), 0)
+            theta_new = np.clip(theta + r, self.lower, self.upper)
         return theta_new
 
     def _compare(self, prop):
+        '''
+        Accept/Reject proposed param
+        '''
         a1 = self._logpost(prop)
         a2 = self._logpost()
         a = a1 - a2
@@ -135,9 +178,15 @@ class MCMC:
             self.last_theta = prop
             self.last_post = a1 # cache last value
         else:
-            self.last_post = a2
+            self.last_post = a2 # cache last value
 
     def run(self, N, bip=0, mode='gibbs'):
+        '''
+        Main iteration method that combines all other methods
+        N -> number of iterations
+        bip -> burn-in-period
+        mode -> choose between Gibbs and Metropolis Hastings
+        '''
 
         for i in range(N):
             self.n_iters += 1
@@ -160,6 +209,9 @@ class MCMC:
 
 
 class Simulator:
+    '''
+    Generates games and scores between a set of teams for a set of rounds
+    '''
 
     def __init__(self, n_teams=8, rounds=1):
         self.n_teams = n_teams
@@ -196,11 +248,15 @@ def main():
     N = args.N
     bip = args.bip
     mode = args.mode
+    prior = {
+        'lower': 0.1,
+        'upper': 3
+    }
 
     sim = Simulator(n_teams, n_rounds)
     p_points, g_tables = sim.gen()
     
-    mcmc = MCMC(g_tables)
+    mcmc = MCMC(g_tables, prior=prior)
     mcmc.run(N, bip=bip, mode=mode)
 
     posterior = mcmc.posterior
