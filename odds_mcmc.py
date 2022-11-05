@@ -217,7 +217,7 @@ class Simulator:
         self.n_teams = n_teams
         self.rounds = rounds
 
-    def gen(self, lower=0.1, upper=3):
+    def gen(self, lower=0.2, upper=2):
         power_points = np.append(random(self.n_teams-1)*(upper-lower)+lower, 1)
         game_tables = []
 
@@ -266,14 +266,14 @@ def main():
     upper_quantile = df_post.quantile(0.975)
     
     df_post.plot(subplots=True, title='Trace Plots')
-    axes = df_post.hist(alpha=0.5)
+    axes = df_post.hist(alpha=0.5, bins=50, density=True)
     for ax, score in zip(axes.flatten(), p_points):
         ax.axvline(x=score)
     
     plt.figure()
-    plt.plot(p_points, color='blue', label='True score')
+    plt.plot(p_points, color='blue', label='True score', marker='o')
     plt.fill_between(range(mcmc.n_teams), lower_quantile, upper_quantile, color='orange', alpha=0.4)
-    plt.plot(post_mean, color='orange', label='Posterior mean')
+    plt.plot(post_mean, color='orange', label='Posterior mean', marker='o')
     plt.title('True score vs Posterior 95% quantile & mean')
     plt.ylabel('Score')
     plt.xlabel('Teams')
