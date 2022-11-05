@@ -58,7 +58,7 @@ class MCMC:
         '''
         game_tables: Poissibly unfinished tables of games
         '''
-        self.std = 0.05 # used for proposing next element
+        self.std = 0.01 # used for proposing next element
         self.n_accepted = 0
         self.n_iters = 0
 
@@ -217,8 +217,8 @@ class Simulator:
         self.n_teams = n_teams
         self.rounds = rounds
 
-    def gen(self):
-        power_points = np.append(random(self.n_teams-1)*2, 1)
+    def gen(self, lower=0.1, upper=3):
+        power_points = np.append(random(self.n_teams-1)*(upper-lower)+lower, 1)
         game_tables = []
 
         for _ in range(self.rounds):
@@ -260,11 +260,17 @@ def main():
     mcmc.run(N, bip=bip, mode=mode)
 
     posterior = mcmc.posterior
-    post_mean = np.mean(posterior, axis=0)
-    lower_quantile = np.quantile(posterior, 0.025, axis=0)
-    upper_quantile = np.quantile(posterior, 0.97, axis=0)
+    df_post = pd.DataFrame(posterior)
+    post_mean = df_post.mean()
+    lower_quantile = df_post.quantile(0.025)
+    upper_quantile = df_post.quantile(0.975)
     
+    df_post.plot(subplots=True, title='Trace Plots')
+    axes = df_post.hist(alpha=0.5)
+    for ax, score in zip(axes.flatten(), p_points):
+        ax.axvline(x=score)
     
+    plt.figure()
     plt.plot(p_points, color='blue', label='True score')
     plt.fill_between(range(mcmc.n_teams), lower_quantile, upper_quantile, color='orange', alpha=0.4)
     plt.plot(post_mean, color='orange', label='Posterior mean')
