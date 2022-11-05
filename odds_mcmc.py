@@ -1,4 +1,5 @@
 import numpy as np
+from string import ascii_uppercase
 import pandas as pd
 from copy import deepcopy
 from collections import defaultdict
@@ -213,9 +214,12 @@ class Simulator:
     Generates games and scores between a set of teams for a set of rounds
     '''
 
-    def __init__(self, n_teams=8, rounds=1):
-        self.n_teams = n_teams
+    def __init__(self, teams=5, rounds=1):
+        if isinstance(teams, int): 
+            teams = list(ascii_uppercase[:teams])
+        self.n_teams = len(teams)
         self.rounds = rounds
+        self.teams = teams
 
     def gen(self, lower=0.2, upper=2):
         power_points = np.append(random(self.n_teams-1)*(upper-lower)+lower, 1)
@@ -238,9 +242,9 @@ def main():
     import argparse
     parser = argparse.ArgumentParser()
     parser.add_argument('--n_teams', help='number of teams [def=5]', type=int, default=5)
-    parser.add_argument('--n_rounds', help='number of rounds [def=3]', type=int, default=3)
+    parser.add_argument('--n_rounds', help='number of rounds [def=1]', type=int, default=1)
     parser.add_argument('--N', help='number of MCMC iterations [def=1000]', type=int, default=1000)
-    parser.add_argument('--bip', help='MCMC burn-in-period [def=100]', type=int, default=100)
+    parser.add_argument('--bip', help='MCMC burn-in-period [def=0]', type=int, default=0)
     parser.add_argument('--mode', help='MCMC mode {gibbs, mh} [def=gibbs]', type=str, default='gibbs')
     args = parser.parse_args()
     n_teams = args.n_teams
@@ -259,14 +263,22 @@ def main():
     mcmc = MCMC(g_tables, prior=prior)
     mcmc.run(N, bip=bip, mode=mode)
 
-    posterior = mcmc.posterior
-    df_post = pd.DataFrame(posterior)
-    post_mean = df_post.mean()
-    lower_quantile = df_post.quantile(0.025)
-    upper_quantile = df_post.quantile(0.975)
+    posterior = pd.DataFrame(mcmc.posterior, columns=sim.teams)
+    post_mean = posterior.mean()
+
+    df_post_mean = pd.DataFrame(post_mean)
+    df_true_scores = pd.DataFrame(p_points, index=sim.teams)
+    mean_odds = df_post_mean.dot((1/df_post_mean).T)
+    true_odds = df_true_scores.dot((1/df_true_scores).T)
+
+    print(mean_odds)
+    print(true_odds)
+
+    lower_quantile = posterior.quantile(0.025)
+    upper_quantile = posterior.quantile(0.975)
     
-    df_post.plot(subplots=True, title='Trace Plots')
-    axes = df_post.hist(alpha=0.5, bins=50, density=True)
+    posterior.plot(subplots=True, title='Trace Plots')
+    axes = posterior.hist(alpha=0.5, bins=50, density=True)
     for ax, score in zip(axes.flatten(), p_points):
         ax.axvline(x=score)
     
