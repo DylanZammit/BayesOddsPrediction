@@ -6,9 +6,10 @@ from copy import deepcopy
 from collections import defaultdict
 from numpy.random import random, randn, exponential
 from scipy.stats import bernoulli, beta, expon
-from functools import lru_cache
 import matplotlib.pyplot as plt
 from itertools import combinations
+import networkx as nx
+
 
 def savefig(fn):
     plt.savefig(fn, bbox_inches='tight', pad_inches=0.1, dpi=1000, format='pdf')
@@ -33,35 +34,12 @@ def scores2prob(a, b):
     return z, 1-z
 
 
-# https://stackoverflow.com/questions/24471136/how-to-find-all-paths-between-two-graph-nodes
-def find_all_paths(graph, team_pair, path=None):
-    '''
-    Returns all acyclic paths from team A to team B
-    graph: Directed graph of games played
-    team_pair: starting and ending points
-    '''
-    if not path: path = []
-    start, end = team_pair
-    path = path + [start]
-    if start == end:
-        return [path]
-    if start not in graph:# or graph[start] == -1:
-        return []
-    paths = []
-    for node in graph[start]:
-        if node not in path:
-            newpaths = find_all_paths(graph, (node, end), path)
-            for newpath in newpaths:
-                paths.append(newpath)
-    return paths       
-
-
 class MCMC:
     '''
     Performs MCMC iterations to return posterior of scores
     '''
 
-    def __init__(self, game_tables, **kwargs):
+    def __init__(self, game_tables, max_chain_length=3, **kwargs):
         '''
         game_tables: Poissibly unfinished tables of games
         '''
@@ -78,12 +56,17 @@ class MCMC:
         chains = []
         # generates all possible paths from every pair of teams
         for rd, games in enumerate(game_tables):
-            games_parsed = self._parse(games)
+            G = nx.Graph(self._parse(games))
             for i, j in combinations(range(self.n_teams), 2):
                 print(f'generating paths for teams round {rd+1}: ({i}, {j})...', end='', flush=True)
-                chain = [(rd, ch) for ch in find_all_paths(games_parsed, (i, j))]
-                chains += chain
-                print('done')
+                for k in range(1, max_chain_length):
+                    C = nx.all_simple_paths(G, i, j, k)
+                    C = [c for c in C]
+                    if len(C): break
+                chains += [(rd, ch) for ch in C]
+
+                print('done', end='\r')
+        print()
 
         self.chains = chains
         self.last_post = None # used for caching
