@@ -1,4 +1,5 @@
 import numpy as np
+from random import shuffle
 from string import ascii_uppercase
 import pandas as pd
 from copy import deepcopy
@@ -8,6 +9,9 @@ from scipy.stats import bernoulli, beta, expon
 from functools import lru_cache
 import matplotlib.pyplot as plt
 from itertools import combinations
+
+def savefig(fn):
+    plt.savefig(fn, bbox_inches='tight', pad_inches=0.1, dpi=1000, format='pdf')
 
 
 def scores2logprob(a, b):
@@ -20,12 +24,14 @@ def scores2logprob(a, b):
     z2 = np.log(b) - np.log(a+b)
     return z1, z2
 
+
 def scores2prob(a, b):
     '''
     Same as above, but no log
     '''
     z = a/(a+b)
     return z, 1-z
+
 
 # https://stackoverflow.com/questions/24471136/how-to-find-all-paths-between-two-graph-nodes
 def find_all_paths(graph, team_pair, path=None):
@@ -74,7 +80,7 @@ class MCMC:
         for rd, games in enumerate(game_tables):
             games_parsed = self._parse(games)
             for i, j in combinations(range(self.n_teams), 2):
-                print(f'generating paths for teams round {rd}: ({i}, {j})...', end='', flush=True)
+                print(f'generating paths for teams round {rd+1}: ({i}, {j})...', end='', flush=True)
                 chain = [(rd, ch) for ch in find_all_paths(games_parsed, (i, j))]
                 chains += chain
                 print('done')
@@ -194,7 +200,9 @@ class MCMC:
             
             if mode == 'gibbs':
                 print(f'{i}/{N}={int(i/N*100)}%', end='\r')
-                for j in range(self.n_teams-1):
+                idx = list(range(self.n_teams-1))
+                shuffle(idx)
+                for j in idx:
                     prop = self._propose(j)
                     self._compare(prop)
             elif mode == 'mh':
@@ -221,18 +229,18 @@ class Simulator:
         self.rounds = rounds
         self.teams = teams
 
-    def gen(self, lower=0.2, upper=2):
+    def gen(self, lower=0.5, upper=2, pct=1):
         power_points = np.append(random(self.n_teams-1)*(upper-lower)+lower, 1)
         game_tables = []
 
         for _ in range(self.rounds):
             game_table = np.zeros(shape=[self.n_teams, self.n_teams])-1
-            for i in range(self.n_teams):
-                for j in range(i+1, self.n_teams):
-                    p = scores2prob(power_points[i], power_points[j])[0]
+            for i, j in combinations(range(self.n_teams), 2):
+                p = scores2prob(power_points[i], power_points[j])[0]
+                if random() > pct: continue
 
-                    game_table[i][j] = int(bernoulli.rvs(p))
-                    game_table[j][i] = 1-game_table[i][j]
+                game_table[i][j] = int(bernoulli.rvs(p))
+                game_table[j][i] = 1-game_table[i][j]
             game_tables.append(game_table)
 
         return power_points, game_tables
@@ -246,6 +254,7 @@ def main():
     parser.add_argument('--N', help='number of MCMC iterations [def=1000]', type=int, default=1000)
     parser.add_argument('--bip', help='MCMC burn-in-period [def=0]', type=int, default=0)
     parser.add_argument('--mode', help='MCMC mode {gibbs, mh} [def=gibbs]', type=str, default='gibbs')
+    parser.add_argument('--pct', help='Percentage of games played [def=1]', type=float, default=1)
     args = parser.parse_args()
     n_teams = args.n_teams
     n_rounds = args.n_rounds
@@ -253,12 +262,14 @@ def main():
     bip = args.bip
     mode = args.mode
     prior = {
-        'lower': 0.1,
-        'upper': 3
+        'lower': 0.5,
+        'upper': 2.5
     }
 
-    sim = Simulator(n_teams, n_rounds)
-    p_points, g_tables = sim.gen()
+    sim = Simulator([f'T_{i+1}' for i in range(n_teams)], n_rounds)
+    p_points, g_tables = sim.gen(pct=args.pct)
+
+    print(pd.DataFrame(g_tables[0], columns=sim.teams, index=sim.teams).astype(int))
     
     mcmc = MCMC(g_tables, prior=prior)
     mcmc.run(N, bip=bip, mode=mode)
@@ -271,24 +282,31 @@ def main():
     mean_odds = df_post_mean.dot((1/df_post_mean).T)
     true_odds = df_true_scores.dot((1/df_true_scores).T)
 
+    print(post_mean)
+    print(p_points)
     print(mean_odds)
     print(true_odds)
 
     lower_quantile = posterior.quantile(0.025)
     upper_quantile = posterior.quantile(0.975)
     
-    posterior.plot(subplots=True, title='Trace Plots')
-    axes = posterior.hist(alpha=0.5, bins=50, density=True)
-    for ax, score in zip(axes.flatten(), p_points):
-        ax.axvline(x=score)
+    posterior_nofixed = posterior.drop([sim.teams[-1]], axis=1)
+    posterior_nofixed.plot(subplots=True, title='Trace Plots')
+    savefig('trace.pdf')
+
+    axes = posterior_nofixed.hist(alpha=0.5, bins=50, density=False, range=(0.5,2.5))
+    for ax, score in zip(axes.flatten()[:-1], p_points[:-1]):
+        ax.axvline(x=score, color='orange')
     
+    savefig('posterior.pdf')
     plt.figure()
     plt.plot(p_points, color='blue', label='True score', marker='o')
     plt.fill_between(range(mcmc.n_teams), lower_quantile, upper_quantile, color='orange', alpha=0.4)
     plt.plot(post_mean, color='orange', label='Posterior mean', marker='o')
-    plt.title('True score vs Posterior 95% quantile & mean')
+    #plt.title('True score vs Posterior 95% quantile & mean')
     plt.ylabel('Score')
     plt.xlabel('Teams')
+    savefig('post_mean.pdf')
 
     plt.legend()
     plt.show()
