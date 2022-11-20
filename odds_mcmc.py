@@ -14,6 +14,11 @@ import networkx as nx
 def savefig(fn):
     plt.savefig(fn, bbox_inches='tight', pad_inches=0.1, dpi=1000, format='pdf')
 
+def RMSE(x, y):
+    x = np.array(x)
+    y = np.array(y)
+    return np.sqrt(np.mean((x-y)**2))
+
 
 def scores2logprob(a, b):
     '''
@@ -90,7 +95,7 @@ class MCMC:
         out = defaultdict(list)
         for i, row in enumerate(games):
             for j, game in enumerate(row):
-                if game != -1:
+                if game != -1 and not np.isnan(game):
                     out[i].append(j)
         return out
 
@@ -229,32 +234,15 @@ class Simulator:
         return power_points, game_tables
 
 
-def main():
-    import argparse
-    parser = argparse.ArgumentParser()
-    parser.add_argument('--n_teams', help='number of teams [def=5]', type=int, default=5)
-    parser.add_argument('--n_rounds', help='number of rounds [def=1]', type=int, default=1)
-    parser.add_argument('--N', help='number of MCMC iterations [def=1000]', type=int, default=1000)
-    parser.add_argument('--bip', help='MCMC burn-in-period [def=0]', type=int, default=0)
-    parser.add_argument('--mode', help='MCMC mode {gibbs, mh} [def=gibbs]', type=str, default='gibbs')
-    parser.add_argument('--pct', help='Percentage of games played [def=1]', type=float, default=1)
-    args = parser.parse_args()
-    n_teams = args.n_teams
-    n_rounds = args.n_rounds
-    N = args.N
-    bip = args.bip
-    mode = args.mode
+def main(p_points, g_tables, N, bip, mode, mcl=3):
     prior = {
         'lower': 0.5,
         'upper': 2.5
     }
 
-    sim = Simulator([f'T_{i+1}' for i in range(n_teams)], n_rounds)
-    p_points, g_tables = sim.gen(pct=args.pct)
-
     print(pd.DataFrame(g_tables[0], columns=sim.teams, index=sim.teams).astype(int))
     
-    mcmc = MCMC(g_tables, prior=prior)
+    mcmc = MCMC(g_tables, mcl, prior=prior)
     mcmc.run(N, bip=bip, mode=mode)
 
     posterior = pd.DataFrame(mcmc.posterior, columns=sim.teams)
@@ -269,6 +257,20 @@ def main():
     print(p_points)
     print(mean_odds)
     print(true_odds)
+    A = pd.Series(index=sim.teams, data=p_points)
+    true_order = A.sort_values(ascending=False).index 
+    pred_order = post_mean.sort_values(ascending=False).index
+
+    AA = np.hstack(g_tables)
+    AA[AA==-1] = np.nan
+    standings = np.nanmean(AA, axis=1)
+    standings = pd.Series(index=sim.teams, data=standings).sort_values(ascending=False).index
+    orders = pd.DataFrame(data={'True': true_order, 'Pred': pred_order, 'Standings': standings})
+    print('PREDICTED TEAM PWOER')
+    print(orders)
+
+    rmse = RMSE(mean_odds, true_odds)
+    print(f'{mcl=}: RMSE={rmse}')
 
     lower_quantile = posterior.quantile(0.025)
     upper_quantile = posterior.quantile(0.975)
@@ -278,7 +280,7 @@ def main():
     savefig('trace.pdf')
 
     axes = posterior_nofixed.hist(alpha=0.5, bins=50, density=False, range=(0.5,2.5))
-    for ax, score in zip(axes.flatten()[:-1], p_points[:-1]):
+    for ax, score in zip(axes.flatten(), p_points[:-1]):
         ax.axvline(x=score, color='orange')
     
     savefig('posterior.pdf')
@@ -292,8 +294,31 @@ def main():
     savefig('post_mean.pdf')
 
     plt.legend()
-    plt.show()
+    #plt.show()
 
 
 if __name__ == '__main__':
-    main()
+    import argparse
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--n_teams', help='number of teams [def=5]', type=int, default=5)
+    parser.add_argument('--n_rounds', help='number of rounds [def=1]', type=int, default=1)
+    parser.add_argument('--N', help='number of MCMC iterations [def=1000]', type=int, default=1000)
+    parser.add_argument('--bip', help='MCMC burn-in-period [def=0]', type=int, default=0)
+    parser.add_argument('--chain_length', help='maximum chain length [def=2]', type=int, default=2)
+    parser.add_argument('--mode', help='MCMC mode {gibbs, mh} [def=gibbs]', type=str, default='gibbs')
+    parser.add_argument('--pct', help='Percentage of games played [def=1]', type=float, default=1)
+    args = parser.parse_args()
+    n_teams = args.n_teams
+    n_rounds = args.n_rounds
+    N = args.N
+    bip = args.bip
+    mode = args.mode
+    mcl = args.chain_length
+
+    sim = Simulator([f'T_{i+1}' for i in range(n_teams)], n_rounds)
+    p_points, g_tables = sim.gen(pct=args.pct)
+
+
+    main(p_points, g_tables, N, bip, mode, mcl)
+    #main(p_points, g_tables, N, bip, mode, 2)
+    plt.show()
