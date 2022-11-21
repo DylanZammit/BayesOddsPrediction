@@ -20,14 +20,18 @@ def RMSE(x, y):
     return np.sqrt(np.mean((x-y)**2))
 
 
+np.seterr('raise')
 def scores2logprob(a, b):
     '''
     Translates two scores to log probabilities
     a, b -> scores of first and second team
     Returns: logprob that team A beats team B, and vice versa
     '''
-    z1 = np.log(a) - np.log(a+b)
-    z2 = np.log(b) - np.log(a+b)
+    try:
+        z1 = np.log(a) - np.log(a+b)
+        z2 = np.log(b) - np.log(a+b)
+    except:
+        return np.nan, np.nan
     return z1, z2
 
 
@@ -48,7 +52,7 @@ class MCMC:
         '''
         game_tables: Poissibly unfinished tables of games
         '''
-        self.std = 0.01 # used for proposing next element
+        self.std = 0.1 # used for proposing next element
         self.n_accepted = 0
         self.n_iters = 0
 
@@ -123,13 +127,21 @@ class MCMC:
 
         return sum(out)
     
-    def _logprior(self, theta):
+    def _logprior_OLD(self, theta):
         '''
         Log Prior of scores. In this case beta
         '''
         theta_squash = theta[:-1]
         a, b = self.lower, self.upper
         return sum(beta.logpdf((theta_squash-a)/(b-a), self.alpha, self.beta))
+
+    def _logprior(self, theta):
+        '''
+        Log Prior of scores. In this case exponential
+        '''
+        theta_squash = theta[:-1]
+        x = sum(expon.logpdf(theta_squash, scale=self.alpha))
+        return x
 
     def _logpost(self, theta=None):
         '''
@@ -148,15 +160,17 @@ class MCMC:
         Proposal distribution
         i -> only updates ith element
         '''
-        if i:
+        if i is not None:
             theta = deepcopy(self.last_theta)
             r = self.std*randn()
             theta[i] += r
-            theta_new = np.clip(theta, self.lower, self.upper)
+            #theta_new = np.clip(theta, self.lower, self.upper)
+            theta_new = np.copy(theta)
         else:
             theta = deepcopy(self.last_theta)
             r = np.append(self.std*randn(self.n_teams-1), 0)
-            theta_new = np.clip(theta + r, self.lower, self.upper)
+            # theta_new = np.clip(theta + r, self.lower, self.upper)
+            theta_new = np.copy(theta)
         return theta_new
 
     def _compare(self, prop):
@@ -217,19 +231,37 @@ class Simulator:
         self.rounds = rounds
         self.teams = teams
 
-    def gen(self, lower=0.5, upper=2, pct=1):
+    def gen(self, lower=0.5, upper=2, pct=1, mask=True):
+
         power_points = np.append(random(self.n_teams-1)*(upper-lower)+lower, 1)
         game_tables = []
 
-        for _ in range(self.rounds):
-            game_table = np.zeros(shape=[self.n_teams, self.n_teams])-1
-            for i, j in combinations(range(self.n_teams), 2):
-                p = scores2prob(power_points[i], power_points[j])[0]
-                if random() > pct: continue
+        if not mask:
+            for _ in range(self.rounds):
+                game_table = np.zeros(shape=[self.n_teams, self.n_teams])-1
+                for i, j in combinations(range(self.n_teams), 2):
+                    p = scores2prob(power_points[i], power_points[j])[0]
+                    if random() > pct: continue
 
-                game_table[i][j] = int(bernoulli.rvs(p))
-                game_table[j][i] = 1-game_table[i][j]
-            game_tables.append(game_table)
+                    game_table[i][j] = int(bernoulli.rvs(p))
+                    game_table[j][i] = 1-game_table[i][j]
+                game_tables.append(game_table)
+        else:
+            game_mask = np.zeros(shape=[self.n_teams, self.n_teams])
+            for i, j in combinations(range(self.n_teams), 2):
+                game_mask[i][j] = random() < pct
+                game_mask[j][i] = game_mask[i][j]
+
+            for _ in range(self.rounds):
+                game_table = np.zeros(shape=[self.n_teams, self.n_teams])-1
+                for i, j in combinations(range(self.n_teams), 2):
+                    p = scores2prob(power_points[i], power_points[j])[0]
+                    game_table[i][j] = int(bernoulli.rvs(p))
+                    game_table[j][i] = 1-game_table[i][j]
+                game_table = np.where(game_mask, game_table, -1)
+                game_tables.append(game_table)
+
+
 
         return power_points, game_tables
 
@@ -279,7 +311,8 @@ def main(p_points, g_tables, N, bip, mode, mcl=3):
     posterior_nofixed.plot(subplots=True, title='Trace Plots')
     savefig('trace.pdf')
 
-    axes = posterior_nofixed.hist(alpha=0.5, bins=50, density=False, range=(0.5,2.5))
+    max_val = posterior_nofixed.max().max()
+    axes = posterior_nofixed.hist(alpha=0.5, bins=50, density=False, range=(0, max_val))
     for ax, score in zip(axes.flatten(), p_points[:-1]):
         ax.axvline(x=score, color='orange')
     
