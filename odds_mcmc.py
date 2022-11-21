@@ -278,20 +278,40 @@ def main(p_points, g_tables, N, bip, mode, mcl=3):
     mcmc.run(N, bip=bip, mode=mode)
 
     posterior = pd.DataFrame(mcmc.posterior, columns=sim.teams)
-    post_mean = posterior.mean()
+    posterior_nofixed = posterior.drop([sim.teams[-1]], axis=1)
 
-    df_post_mean = pd.DataFrame(post_mean)
+    posterior_nofixed.plot(subplots=True, title='Trace Plots')
+    savefig('trace.pdf')
+
+    max_val = posterior_nofixed.max().max()
+    axes = posterior_nofixed.hist(alpha=0.5, bins=50, density=True, range=(0, max_val))
+    post_mode = []
+
+    # TODO: beautify code
+    for ax, score, col in zip(axes.flatten(), p_points[:-1], posterior_nofixed):
+        ax.axvline(x=score, color='orange')
+     
+        kde = posterior_nofixed[col].plot.kde(ax=ax)
+        mode = kde.lines[1].get_xdata()[np.argmax(kde.lines[1].get_ydata())]
+        post_mode.append(mode)
+    post_mode.append(1)
+    
+    savefig('posterior.pdf')
+    plt.figure()
+    post_mode = pd.Series(post_mode, index=sim.teams)
+
+    df_post_mode = pd.DataFrame(post_mode)
     df_true_scores = pd.DataFrame(p_points, index=sim.teams)
-    mean_odds = df_post_mean.dot((1/df_post_mean).T)
+    mode_odds = df_post_mode.dot((1/df_post_mode).T)
     true_odds = df_true_scores.dot((1/df_true_scores).T)
 
-    print(post_mean)
+    print(post_mode)
     print(p_points)
-    print(mean_odds)
+    print(mode_odds)
     print(true_odds)
     A = pd.Series(index=sim.teams, data=p_points)
     true_order = A.sort_values(ascending=False).index 
-    pred_order = post_mean.sort_values(ascending=False).index
+    pred_order = post_mode.sort_values(ascending=False).index
 
     AA = np.hstack(g_tables)
     AA[AA==-1] = np.nan
@@ -301,30 +321,19 @@ def main(p_points, g_tables, N, bip, mode, mcl=3):
     print('PREDICTED TEAM PWOER')
     print(orders)
 
-    rmse = RMSE(mean_odds, true_odds)
+    rmse = RMSE(mode_odds, true_odds)
     print(f'{mcl=}: RMSE={rmse}')
 
     lower_quantile = posterior.quantile(0.025)
     upper_quantile = posterior.quantile(0.975)
     
-    posterior_nofixed = posterior.drop([sim.teams[-1]], axis=1)
-    posterior_nofixed.plot(subplots=True, title='Trace Plots')
-    savefig('trace.pdf')
-
-    max_val = posterior_nofixed.max().max()
-    axes = posterior_nofixed.hist(alpha=0.5, bins=50, density=False, range=(0, max_val))
-    for ax, score in zip(axes.flatten(), p_points[:-1]):
-        ax.axvline(x=score, color='orange')
-    
-    savefig('posterior.pdf')
-    plt.figure()
     plt.plot(p_points, color='blue', label='True score', marker='o')
     plt.fill_between(range(mcmc.n_teams), lower_quantile, upper_quantile, color='orange', alpha=0.4)
-    plt.plot(post_mean, color='orange', label='Posterior mean', marker='o')
+    plt.plot(post_mode, color='orange', label='Posterior mode', marker='o')
     #plt.title('True score vs Posterior 95% quantile & mean')
     plt.ylabel('Score')
     plt.xlabel('Teams')
-    savefig('post_mean.pdf')
+    savefig('post_mode.pdf')
 
     plt.legend()
     #plt.show()
