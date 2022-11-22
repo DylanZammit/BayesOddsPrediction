@@ -1,4 +1,5 @@
 import numpy as np
+import requests
 from random import shuffle
 from string import ascii_uppercase
 import pandas as pd
@@ -42,6 +43,9 @@ def scores2prob(a, b):
     z = a/(a+b)
     return z, 1-z
 
+def scores2odds(scores):
+    df = pd.DataFrame(scores)
+    return df.dot((1/df).T)
 
 class MCMC:
     '''
@@ -262,8 +266,7 @@ class Simulator:
                 game_tables.append(game_table)
 
 
-
-        return power_points, game_tables
+        return power_points, [game_tables]
 
 
 def main(p_points, g_tables, N, bip, mode, mcl=3):
@@ -288,11 +291,13 @@ def main(p_points, g_tables, N, bip, mode, mcl=3):
     post_mode = []
 
     # TODO: beautify code
-    for ax, score, col in zip(axes.flatten(), p_points[:-1], posterior_nofixed):
-        ax.axvline(x=score, color='orange')
+    for i, (ax, col) in enumerate(zip(axes.flatten(), posterior_nofixed)):
+        if not args.division:
+            ax.axvline(x=p_points[i], color='orange')
      
         kde = posterior_nofixed[col].plot.kde(ax=ax)
-        mode = kde.lines[1].get_xdata()[np.argmax(kde.lines[1].get_ydata())]
+        z = int(not args.division)
+        mode = kde.lines[z].get_xdata()[np.argmax(kde.lines[z].get_ydata())]
         post_mode.append(mode)
     post_mode.append(1)
     
@@ -301,33 +306,42 @@ def main(p_points, g_tables, N, bip, mode, mcl=3):
     post_mode = pd.Series(post_mode, index=sim.teams)
 
     df_post_mode = pd.DataFrame(post_mode)
-    df_true_scores = pd.DataFrame(p_points, index=sim.teams)
     mode_odds = df_post_mode.dot((1/df_post_mode).T)
-    true_odds = df_true_scores.dot((1/df_true_scores).T)
 
+
+    print('PRED SCORES')
     print(post_mode)
-    print(p_points)
+    print('PRED ODDS')
     print(mode_odds)
-    print(true_odds)
-    A = pd.Series(index=sim.teams, data=p_points)
-    true_order = A.sort_values(ascending=False).index 
     pred_order = post_mode.sort_values(ascending=False).index
 
     AA = np.hstack(g_tables)
     AA[AA==-1] = np.nan
     standings = np.nanmean(AA, axis=1)
     standings = pd.Series(index=sim.teams, data=standings).sort_values(ascending=False).index
-    orders = pd.DataFrame(data={'True': true_order, 'Pred': pred_order, 'Standings': standings})
-    print('PREDICTED TEAM PWOER')
-    print(orders)
 
-    rmse = RMSE(mode_odds, true_odds)
-    print(f'{mcl=}: RMSE={rmse}')
+    if not args.division:
+        df_true_scores = pd.DataFrame(p_points, index=sim.teams)
+        true_odds = df_true_scores.dot((1/df_true_scores).T)
+        print('TRUE SCORES')
+        print(p_points)
+        print('TRUE ODDS')
+        print(true_odds)
+
+        A = pd.Series(index=sim.teams, data=p_points)
+        true_order = A.sort_values(ascending=False).index 
+        orders = pd.DataFrame(data={'True': true_order, 'Pred': pred_order, 'Standings': standings})
+        print('PREDICTED TEAM POWER')
+        print(orders)
+
+        rmse = RMSE(mode_odds, true_odds)
+        print(f'{mcl=}: RMSE={rmse}')
 
     lower_quantile = posterior.quantile(0.025)
     upper_quantile = posterior.quantile(0.975)
     
-    plt.plot(p_points, color='blue', label='True score', marker='o')
+    if not args.division:
+        plt.plot(p_points, color='blue', label='True score', marker='o')
     plt.fill_between(range(mcmc.n_teams), lower_quantile, upper_quantile, color='orange', alpha=0.4)
     plt.plot(post_mode, color='orange', label='Posterior mode', marker='o')
     #plt.title('True score vs Posterior 95% quantile & mean')
@@ -337,6 +351,32 @@ def main(p_points, g_tables, N, bip, mode, mcl=3):
 
     plt.legend()
     #plt.show()
+
+def clean(x):
+    if not isinstance(x, str): return
+    return (int(x[0])>=3)*1
+
+def get_real(division=4):
+    url = 'https://www.sportyhq.com/club/box/view/60'
+    header = {
+      "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/50.0.2661.75 Safari/537.36",
+      "X-Requested-With": "XMLHttpRequest"
+    }
+
+    r = requests.get(url, headers=header)
+    dfs = pd.read_html(r.text)
+
+    # for table in dfs[division-1]:
+    table = dfs[division-1]
+
+    names = [name.split()[-1] for name in table.iloc[:,1]]
+    table = table.drop(table.columns[[0, 1, -1]], axis=1)
+    table.columns = names
+    table.index = names
+    table = table.applymap(clean).fillna(-1)
+    noplays = (table==-1).all()
+    table = table.loc[~noplays, ~noplays]
+    return None, table
 
 
 if __name__ == '__main__':
@@ -349,6 +389,7 @@ if __name__ == '__main__':
     parser.add_argument('--chain_length', help='maximum chain length [def=2]', type=int, default=2)
     parser.add_argument('--mode', help='MCMC mode {gibbs, mh} [def=gibbs]', type=str, default='gibbs')
     parser.add_argument('--pct', help='Percentage of games played [def=1]', type=float, default=1)
+    parser.add_argument('--division', help='use real data', type=int, default=False)
     args = parser.parse_args()
     n_teams = args.n_teams
     n_rounds = args.n_rounds
@@ -357,10 +398,14 @@ if __name__ == '__main__':
     mode = args.mode
     mcl = args.chain_length
 
-    sim = Simulator([f'T_{i+1}' for i in range(n_teams)], n_rounds)
-    p_points, g_tables = sim.gen(pct=args.pct)
+    if args.division:
+        p_points, g_tables = get_real(args.division)
+        sim = Simulator(g_tables.index)
+        g_tables = [np.array(g_tables)]
+    else:
+        sim = Simulator([f'T_{i+1}' for i in range(n_teams)], n_rounds)
+        p_points, g_tables = sim.gen(pct=args.pct)
 
 
     main(p_points, g_tables, N, bip, mode, mcl)
-    #main(p_points, g_tables, N, bip, mode, 2)
     plt.show()
