@@ -1,6 +1,7 @@
 import numpy as np
+from pprint import pprint
 import requests
-from random import shuffle
+from random import shuffle, randint
 from string import ascii_uppercase
 import pandas as pd
 from copy import deepcopy
@@ -52,7 +53,7 @@ class MCMC:
     Performs MCMC iterations to return posterior of scores
     '''
 
-    def __init__(self, game_tables, max_chain_length=3, **kwargs):
+    def __init__(self, games, n_teams, **kwargs):
         '''
         game_tables: Poissibly unfinished tables of games
         '''
@@ -61,27 +62,10 @@ class MCMC:
         self.n_iters = 0
 
         prior_params = kwargs.get('prior', {})
-        self.alpha, self.beta = prior_params.get('alpha', 1), prior_params.get('beta', 1) # prior parameter
-        self.lower, self.upper = prior_params.get('lower', 0), prior_params.get('upper', 10) # prior parameter
-        self.n_teams = game_tables[0].shape[0]
-        self.game_tables = game_tables
+        self.alpha = prior_params.get('alpha', 1) # prior parameter
+        self.n_teams = n_teams
+        self.games = games
 
-        chains = []
-        # generates all possible paths from every pair of teams
-        for rd, games in enumerate(game_tables):
-            G = nx.Graph(self._parse(games))
-            for i, j in combinations(range(self.n_teams), 2):
-                print(f'generating paths for teams round {rd+1}: ({i}, {j})...', end='', flush=True)
-                for k in range(1, max_chain_length):
-                    C = nx.all_simple_paths(G, i, j, k)
-                    C = [c for c in C]
-                    if len(C): break
-                chains += [(rd, ch) for ch in C]
-
-                print('done', end='\r')
-        print()
-
-        self.chains = chains
         self.last_post = None # used for caching
 
         self.last_theta = self._init_theta()
@@ -95,24 +79,12 @@ class MCMC:
         '''
         return np.append(random(self.n_teams-1)*2, 1)
 
-    # TODO: not a class method
-    def _parse(self, games):
-        '''
-        Parses ndarray of games to directed graph in dictionary form
-        '''
-        out = defaultdict(list)
-        for i, row in enumerate(games):
-            for j, game in enumerate(row):
-                if game != -1 and not np.isnan(game):
-                    out[i].append(j)
-        return out
-
     # TODO: Only makes sense for MH mode, not Gibbs mode
     @property
     def get_acceptance_ratio(self):
         return self.n_accepted/self.n_iters
 
-    def _loglikelihood(self, chains, theta):
+    def _loglikelihood(self, theta):
         '''
         chains -> data X. All possible chains between A and B from all team pairse A and B
         theta -> scores
@@ -120,13 +92,9 @@ class MCMC:
         l(X|S) = Sum_{rd in rounds}(Sum_{chain in chains}(sum_{game in games}(LogBernoulliPDF(game, s))))
         '''
         out = []
-        for rd_chain in chains:
-            rd, chain = rd_chain
-            n_chain = len(chain)
-            logprob = np.array([scores2logprob(theta[chain[i]], theta[chain[i+1]]) for i in range(n_chain-1)])
-            logprob1, logprob2 = logprob[:, 0], logprob[:, 1]
-            results = np.array([self.game_tables[rd][chain[i]][chain[i+1]] for i in range(n_chain-1)])
-            z = sum(results*logprob1 + (1-results)*logprob2)
+        for i, j, game in self.games:
+            logprob1, logprob2 = scores2logprob(theta[i], theta[j])
+            z = game*logprob1 + (1-game)*logprob2
             out.append(z)
 
         return sum(out)
@@ -157,7 +125,7 @@ class MCMC:
                 return self.last_post  
             theta = self.last_theta
 
-        return self._logprior(theta) + self._loglikelihood(self.chains, theta)
+        return self._logprior(theta) + self._loglikelihood(theta)
 
     def _propose(self, i=None):
         '''
@@ -228,56 +196,32 @@ class Simulator:
     Generates games and scores between a set of teams for a set of rounds
     '''
 
-    def __init__(self, teams=5, rounds=1):
+    def __init__(self, teams=5, max_games=1):
         if isinstance(teams, int): 
             teams = list(ascii_uppercase[:teams])
         self.n_teams = len(teams)
-        self.rounds = rounds
+        self.max_games = max_games
         self.teams = teams
 
-    def gen(self, lower=0.5, upper=2, pct=1, mask=True):
+    def gen(self, lower=0.5, upper=2, mask=True):
 
         power_points = np.append(random(self.n_teams-1)*(upper-lower)+lower, 1)
-        game_tables = []
+        
+        games = []
+        for i, j in combinations(range(self.n_teams), 2):
+            p = scores2prob(power_points[i], power_points[j])[0]
+            n_games = randint(0, self.max_games)
+            games += [(i, j, int(bernoulli.rvs(p))) for _ in range(n_games)]
 
-        if not mask:
-            for _ in range(self.rounds):
-                game_table = np.zeros(shape=[self.n_teams, self.n_teams])-1
-                for i, j in combinations(range(self.n_teams), 2):
-                    p = scores2prob(power_points[i], power_points[j])[0]
-                    if random() > pct: continue
-
-                    game_table[i][j] = int(bernoulli.rvs(p))
-                    game_table[j][i] = 1-game_table[i][j]
-                game_tables.append(game_table)
-        else:
-            game_mask = np.zeros(shape=[self.n_teams, self.n_teams])
-            for i, j in combinations(range(self.n_teams), 2):
-                game_mask[i][j] = random() < pct
-                game_mask[j][i] = game_mask[i][j]
-
-            for _ in range(self.rounds):
-                game_table = np.zeros(shape=[self.n_teams, self.n_teams])-1
-                for i, j in combinations(range(self.n_teams), 2):
-                    p = scores2prob(power_points[i], power_points[j])[0]
-                    game_table[i][j] = int(bernoulli.rvs(p))
-                    game_table[j][i] = 1-game_table[i][j]
-                game_table = np.where(game_mask, game_table, -1)
-                game_tables.append(game_table)
+        return power_points, games
 
 
-        return power_points, [game_tables]
-
-
-def main(p_points, g_tables, N, bip, mode, mcl=3):
+def main(p_points, g_tables, n_teams, N, bip, mode):
     prior = {
-        'lower': 0.5,
-        'upper': 2.5
+        'alpha': 1,
     }
 
-    print(pd.DataFrame(g_tables[0], columns=sim.teams, index=sim.teams).astype(int))
-    
-    mcmc = MCMC(g_tables, mcl, prior=prior)
+    mcmc = MCMC(g_tables, n_teams, prior=prior)
     mcmc.run(N, bip=bip, mode=mode)
 
     posterior = pd.DataFrame(mcmc.posterior, columns=sim.teams)
@@ -311,31 +255,24 @@ def main(p_points, g_tables, N, bip, mode, mcl=3):
 
     print('PRED SCORES')
     print(post_mode)
+
     print('PRED ODDS')
     print(mode_odds)
     pred_order = post_mode.sort_values(ascending=False).index
 
-    AA = np.hstack(g_tables)
-    AA[AA==-1] = np.nan
-    standings = np.nanmean(AA, axis=1)
-    standings = pd.Series(index=sim.teams, data=standings).sort_values(ascending=False).index
-
     if not args.division:
         df_true_scores = pd.DataFrame(p_points, index=sim.teams)
         true_odds = df_true_scores.dot((1/df_true_scores).T)
-        print('TRUE SCORES')
-        print(p_points)
         print('TRUE ODDS')
         print(true_odds)
+        print('TRUE SCORES')
+        print(pd.Series(p_points, index=post_mode.index))
 
         A = pd.Series(index=sim.teams, data=p_points)
         true_order = A.sort_values(ascending=False).index 
-        orders = pd.DataFrame(data={'True': true_order, 'Pred': pred_order, 'Standings': standings})
-        print('PREDICTED TEAM POWER')
-        print(orders)
 
         rmse = RMSE(mode_odds, true_odds)
-        print(f'{mcl=}: RMSE={rmse}')
+        print(f'RMSE={rmse}')
 
     lower_quantile = posterior.quantile(0.025)
     upper_quantile = posterior.quantile(0.975)
@@ -386,9 +323,7 @@ if __name__ == '__main__':
     parser.add_argument('--n_rounds', help='number of rounds [def=1]', type=int, default=1)
     parser.add_argument('--N', help='number of MCMC iterations [def=1000]', type=int, default=1000)
     parser.add_argument('--bip', help='MCMC burn-in-period [def=0]', type=int, default=0)
-    parser.add_argument('--chain_length', help='maximum chain length [def=2]', type=int, default=2)
     parser.add_argument('--mode', help='MCMC mode {gibbs, mh} [def=gibbs]', type=str, default='gibbs')
-    parser.add_argument('--pct', help='Percentage of games played [def=1]', type=float, default=1)
     parser.add_argument('--division', help='use real data', type=int, default=False)
     args = parser.parse_args()
     n_teams = args.n_teams
@@ -396,16 +331,17 @@ if __name__ == '__main__':
     N = args.N
     bip = args.bip
     mode = args.mode
-    mcl = args.chain_length
 
     if args.division:
         p_points, g_tables = get_real(args.division)
         sim = Simulator(g_tables.index)
-        g_tables = [np.array(g_tables)]
+        g_tables = np.array(g_tables)
+        n_teams = g_tables.shape[0]
     else:
         sim = Simulator([f'T_{i+1}' for i in range(n_teams)], n_rounds)
-        p_points, g_tables = sim.gen(pct=args.pct)
+        p_points, g_tables = sim.gen()
+        pprint(g_tables)
 
 
-    main(p_points, g_tables, N, bip, mode, mcl)
+    main(p_points, g_tables, n_teams, N, bip, mode)
     plt.show()
