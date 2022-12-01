@@ -1,17 +1,17 @@
 import numpy as np
 from pprint import pprint
 import requests
-from random import shuffle, randint
 from string import ascii_uppercase
 import pandas as pd
 from copy import deepcopy
 from collections import defaultdict
-from numpy.random import random, randn, exponential
+from numpy.random import random, randn, exponential, randint
 from scipy.stats import bernoulli, beta, expon
 import matplotlib.pyplot as plt
 from itertools import combinations
 import networkx as nx
 
+np.random.seed(42)
 
 def savefig(fn):
     plt.savefig(fn, bbox_inches='tight', pad_inches=0.1, dpi=1000, format='pdf')
@@ -175,7 +175,6 @@ class MCMC:
             if mode == 'gibbs':
                 print(f'{i}/{N}={int(i/N*100)}%', end='\r')
                 idx = list(range(self.n_teams-1))
-                shuffle(idx)
                 for j in idx:
                     prop = self._propose(j)
                     self._compare(prop)
@@ -210,7 +209,7 @@ class Simulator:
         games = []
         for i, j in combinations(range(self.n_teams), 2):
             p = scores2prob(power_points[i], power_points[j])[0]
-            n_games = randint(0, self.max_games)
+            n_games = randint(0, self.max_games+1)
             games += [(i, j, int(bernoulli.rvs(p))) for _ in range(n_games)]
 
         return power_points, games
@@ -319,9 +318,9 @@ def get_real(division=4):
 if __name__ == '__main__':
     import argparse
     parser = argparse.ArgumentParser()
-    parser.add_argument('--n_teams', help='number of teams [def=5]', type=int, default=5)
-    parser.add_argument('--max_games', help='max number of games between any 2 teams[def=1]', type=int, default=1)
-    parser.add_argument('--N', help='number of MCMC iterations [def=1000]', type=int, default=1000)
+    parser.add_argument('--n_teams', help='number of teams [def=7]', type=int, default=8)
+    parser.add_argument('--max_games', help='max number of games between any 2 teams[def=5]', type=int, default=5)
+    parser.add_argument('--N', help='number of MCMC iterations [def=10000]', type=int, default=10000)
     parser.add_argument('--bip', help='MCMC burn-in-period [def=0]', type=int, default=0)
     parser.add_argument('--mode', help='MCMC mode {gibbs, mh} [def=gibbs]', type=str, default='gibbs')
     parser.add_argument('--division', help='use real data', type=int, default=False)
