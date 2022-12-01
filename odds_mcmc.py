@@ -320,28 +320,28 @@ if __name__ == '__main__':
     import argparse
     parser = argparse.ArgumentParser()
     parser.add_argument('--n_teams', help='number of teams [def=5]', type=int, default=5)
-    parser.add_argument('--n_rounds', help='number of rounds [def=1]', type=int, default=1)
+    parser.add_argument('--max_games', help='max number of games between any 2 teams[def=1]', type=int, default=1)
     parser.add_argument('--N', help='number of MCMC iterations [def=1000]', type=int, default=1000)
     parser.add_argument('--bip', help='MCMC burn-in-period [def=0]', type=int, default=0)
     parser.add_argument('--mode', help='MCMC mode {gibbs, mh} [def=gibbs]', type=str, default='gibbs')
     parser.add_argument('--division', help='use real data', type=int, default=False)
     args = parser.parse_args()
     n_teams = args.n_teams
-    n_rounds = args.n_rounds
+    max_games = args.max_games
     N = args.N
     bip = args.bip
     mode = args.mode
 
     if args.division:
+        # TODO: fix this
         p_points, g_tables = get_real(args.division)
         sim = Simulator(g_tables.index)
         g_tables = np.array(g_tables)
         n_teams = g_tables.shape[0]
     else:
-        sim = Simulator([f'T_{i+1}' for i in range(n_teams)], n_rounds)
+        sim = Simulator([f'T_{i+1}' for i in range(n_teams)], max_games)
         p_points, g_tables = sim.gen()
         pprint(g_tables)
-
 
     main(p_points, g_tables, n_teams, N, bip, mode)
     plt.show()
