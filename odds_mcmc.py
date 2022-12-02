@@ -1,5 +1,6 @@
 import numpy as np
 from pprint import pprint
+import pylab as pl
 import requests
 from string import ascii_uppercase
 import pandas as pd
@@ -232,6 +233,7 @@ def main(p_points, g_tables, n_teams, N, bip, mode):
 
     max_val = posterior_nofixed.max().max()
     axes = posterior_nofixed.hist(alpha=0.5, bins=50, density=True, range=(0, max_val))
+    pl.suptitle('Posterior Estimates and Kernel Density Estimate')
     post_mode = []
 
     # TODO: beautify code
@@ -271,7 +273,7 @@ def main(p_points, g_tables, n_teams, N, bip, mode):
         A = pd.Series(index=sim.teams, data=p_points)
         true_order = A.sort_values(ascending=False).index 
 
-        labels = mode_odds.round(2).astype(str) + ' (' + true_odds.round(2).astype(str) + ')'
+        labels = mode_odds.round(2).astype(str) + '\n(' + true_odds.round(2).astype(str) + ')'
         ax = sns.heatmap(
             mode_odds-true_odds, 
             center=0, 
@@ -284,26 +286,11 @@ def main(p_points, g_tables, n_teams, N, bip, mode):
         )
         ax.set_title('Estimated (True) Odds')
         ax.xaxis.tick_top() 
+        savefig('odds_table.pdf')
         plt.figure()
         rmse = RMSE(mode_odds, true_odds)
         print(f'RMSE={rmse}')
 
-    df_games = pd.DataFrame(g_tables, columns=['Team 1', 'Team 2', 'game']).groupby(['Team 1', 'Team 2']).agg(
-        W = ('game', 'sum'),
-        N = ('game', 'count')
-    )
-    df_games = df_games.rename(lambda x: sim.teams[x])
-
-    df_games['L'] = df_games.N - df_games.W
-    df_games = df_games.drop(['N'], axis=1).reset_index()
-    df_games['Matches'] = df_games.iloc[:,:2].apply(lambda x: x[0]+ ' vs ' + x[1], axis=1)
-    df_games = df_games.drop(['Team 1', 'Team 2'], axis=1)
-    df_games = df_games.set_index('Matches')
-    ax = df_games.plot(kind='barh', stacked=True, color=['blue', 'red'], width=0.9)
-    ax.xaxis.grid(True)
-    ax.set_title('Game outcomes per encounter')
-    ax.legend(['Team 1 Wins', 'Team 2 Wins'])
-    plt.show()
 
     lower_quantile = posterior.quantile(0.025)
     upper_quantile = posterior.quantile(0.975)
@@ -320,6 +307,25 @@ def main(p_points, g_tables, n_teams, N, bip, mode):
 
     plt.legend()
     #plt.show()
+
+def plot_games(g_tables):
+    df_games = pd.DataFrame(g_tables, columns=['Team 1', 'Team 2', 'game']).groupby(['Team 1', 'Team 2']).agg(
+        W = ('game', 'sum'),
+        N = ('game', 'count')
+    )
+    df_games = df_games.rename(lambda x: sim.teams[x])
+
+    df_games['L'] = df_games.N - df_games.W
+    df_games = df_games.drop(['N'], axis=1).reset_index()
+    df_games['Matches'] = df_games.iloc[:,:2].apply(lambda x: x[0]+ ' vs ' + x[1], axis=1)
+    df_games = df_games.drop(['Team 1', 'Team 2'], axis=1)
+    df_games = df_games.set_index('Matches')
+    ax = df_games.plot(kind='barh', stacked=True, color=['blue', 'red'], width=0.9)
+    ax.xaxis.grid(True)
+    ax.set_title('Game outcomes per encounter')
+    ax.legend(['Team 1 Wins', 'Team 2 Wins'])
+    #plt.show()
+    savefig('games.pdf')
 
 def clean(x):
     if not isinstance(x, str): return
@@ -374,6 +380,7 @@ if __name__ == '__main__':
         sim = Simulator(n_teams, max_games)
         p_points, g_tables = sim.gen()
         pprint([(sim.teams[A], sim.teams[B], game) for A, B, game in g_tables])
+    plot_games(g_tables)
 
     main(p_points, g_tables, n_teams, N, bip, mode)
     plt.show()
