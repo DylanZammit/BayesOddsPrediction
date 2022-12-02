@@ -10,8 +10,9 @@ from scipy.stats import bernoulli, beta, expon
 import matplotlib.pyplot as plt
 from itertools import combinations
 import networkx as nx
+import seaborn as sns
 
-np.random.seed(42)
+np.random.seed(765455)
 
 def savefig(fn):
     plt.savefig(fn, bbox_inches='tight', pad_inches=0.1, dpi=1000, format='pdf')
@@ -270,6 +271,17 @@ def main(p_points, g_tables, n_teams, N, bip, mode):
         A = pd.Series(index=sim.teams, data=p_points)
         true_order = A.sort_values(ascending=False).index 
 
+        ax = sns.heatmap(
+            mode_odds-true_odds, 
+            center=0, 
+            annot=mode_odds, 
+            square=True, 
+            linewidths=0.1,
+            linecolor='black',
+            cmap=sns.blend_palette(["red", ".95", "blue"], 100)
+        )
+        ax.xaxis.tick_top() 
+        plt.figure()
         rmse = RMSE(mode_odds, true_odds)
         print(f'RMSE={rmse}')
 
@@ -338,9 +350,9 @@ if __name__ == '__main__':
         g_tables = np.array(g_tables)
         n_teams = g_tables.shape[0]
     else:
-        sim = Simulator([f'T_{i+1}' for i in range(n_teams)], max_games)
+        sim = Simulator(n_teams, max_games)
         p_points, g_tables = sim.gen()
-        pprint(g_tables)
+        pprint([(sim.teams[A], sim.teams[B], game) for A, B, game in g_tables])
 
     main(p_points, g_tables, n_teams, N, bip, mode)
     plt.show()
