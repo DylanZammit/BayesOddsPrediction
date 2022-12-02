@@ -271,25 +271,46 @@ def main(p_points, g_tables, n_teams, N, bip, mode):
         A = pd.Series(index=sim.teams, data=p_points)
         true_order = A.sort_values(ascending=False).index 
 
+        labels = mode_odds.round(2).astype(str) + ' (' + true_odds.round(2).astype(str) + ')'
         ax = sns.heatmap(
             mode_odds-true_odds, 
             center=0, 
-            annot=mode_odds, 
+            annot=labels, 
             square=True, 
             linewidths=0.1,
             linecolor='black',
-            cmap=sns.blend_palette(["red", ".95", "blue"], 100)
+            cmap=sns.blend_palette(["red", ".95", "blue"], 100),
+            fmt=''
         )
+        ax.set_title('Estimated (True) Odds')
         ax.xaxis.tick_top() 
         plt.figure()
         rmse = RMSE(mode_odds, true_odds)
         print(f'RMSE={rmse}')
+
+    df_games = pd.DataFrame(g_tables, columns=['Team 1', 'Team 2', 'game']).groupby(['Team 1', 'Team 2']).agg(
+        W = ('game', 'sum'),
+        N = ('game', 'count')
+    )
+    df_games = df_games.rename(lambda x: sim.teams[x])
+
+    df_games['L'] = df_games.N - df_games.W
+    df_games = df_games.drop(['N'], axis=1).reset_index()
+    df_games['Matches'] = df_games.iloc[:,:2].apply(lambda x: x[0]+ ' vs ' + x[1], axis=1)
+    df_games = df_games.drop(['Team 1', 'Team 2'], axis=1)
+    df_games = df_games.set_index('Matches')
+    ax = df_games.plot(kind='barh', stacked=True, color=['blue', 'red'], width=0.9)
+    ax.xaxis.grid(True)
+    ax.set_title('Game outcomes per encounter')
+    ax.legend(['Team 1 Wins', 'Team 2 Wins'])
+    plt.show()
 
     lower_quantile = posterior.quantile(0.025)
     upper_quantile = posterior.quantile(0.975)
     
     if not args.division:
         plt.plot(p_points, color='blue', label='True score', marker='o')
+        plt.ylim([0.5, 3])
     plt.fill_between(range(mcmc.n_teams), lower_quantile, upper_quantile, color='orange', alpha=0.4)
     plt.plot(post_mode, color='orange', label='Posterior mode', marker='o')
     #plt.title('True score vs Posterior 95% quantile & mean')
