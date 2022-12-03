@@ -16,7 +16,8 @@ import seaborn as sns
 np.random.seed(765455)
 
 def savefig(fn):
-    plt.savefig(fn, bbox_inches='tight', pad_inches=0.1, dpi=1000, format='pdf')
+    ext = 'png'
+    plt.savefig(f'{fn}.{ext}', bbox_inches='tight', pad_inches=0.1, dpi=1000, format=ext)
 
 def RMSE(x, y):
     x = np.array(x)
@@ -229,7 +230,7 @@ def main(p_points, g_tables, n_teams, N, bip, mode):
     posterior_nofixed = posterior.drop([sim.teams[-1]], axis=1)
 
     posterior_nofixed.plot(subplots=True, title='Trace Plots')
-    savefig('trace.pdf')
+    savefig('trace')
 
     max_val = posterior_nofixed.max().max()
     axes = posterior_nofixed.hist(alpha=0.5, bins=50, density=True, range=(0, max_val))
@@ -247,7 +248,7 @@ def main(p_points, g_tables, n_teams, N, bip, mode):
         post_mode.append(mode)
     post_mode.append(1)
     
-    savefig('posterior.pdf')
+    savefig('posterior')
     plt.figure()
     post_mode = pd.Series(post_mode, index=sim.teams)
 
@@ -286,7 +287,7 @@ def main(p_points, g_tables, n_teams, N, bip, mode):
         )
         ax.set_title('Estimated (True) Odds')
         ax.xaxis.tick_top() 
-        savefig('odds_table.pdf')
+        savefig('odds_table')
         plt.figure()
         rmse = RMSE(mode_odds, true_odds)
         print(f'RMSE={rmse}')
@@ -303,7 +304,7 @@ def main(p_points, g_tables, n_teams, N, bip, mode):
     #plt.title('True score vs Posterior 95% quantile & mean')
     plt.ylabel('Score')
     plt.xlabel('Teams')
-    savefig('post_mode.pdf')
+    savefig('post_mode')
 
     plt.legend()
     #plt.show()
@@ -325,7 +326,7 @@ def plot_games(g_tables):
     ax.set_title('Game outcomes per encounter')
     ax.legend(['Team 1 Wins', 'Team 2 Wins'])
     #plt.show()
-    savefig('games.pdf')
+    savefig('games')
 
 def clean(x):
     if not isinstance(x, str): return
